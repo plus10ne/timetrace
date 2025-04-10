@@ -1,4 +1,4 @@
-name: Deploy to Main Branch
+name: Deploy to gh-pages
 
 on:
   push:
@@ -9,21 +9,27 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-          
+
+      - name: Clean workspace
+        run: |
+          git clean -fdx
+          rm -rf node_modules/
+
       - name: Install dependencies
         run: npm install
-      
+
       - name: Build
         run: npm run build
-        
+
       - name: Add .nojekyll
         run: touch dist/.nojekyll
-        
+
       - name: Deploy
         uses: peaceiris/actions-gh-pages@v3
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+          # 关键修改：使用 PAT 而非默认 Token
+          github_token: ${{ secrets.DEPLOY_TOKEN }}
           publish_branch: gh-pages
           publish_dir: ./dist
           force_orphan: true
-          commit_message: 'Deploy: '
+          commit_message: "Deploy: $(date -u)"
