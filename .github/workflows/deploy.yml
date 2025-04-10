@@ -2,7 +2,7 @@ name: Deploy to gh-pages
 
 on:
   push:
-    branches: [main]
+    branches: [main]  # main 分支更新时触发
 
 jobs:
   deploy:
@@ -16,22 +16,11 @@ jobs:
       - name: Build
         run: npm run build
 
-      # 新增以下步骤 ▼▼▼
-      - name: Add .nojekyll
-        run: touch dist/.nojekyll
-
-      - name: Verify build output
-        run: |
-          echo "=== 构建产物验证 ==="
-          ls -la dist/
-          [ -f dist/index.html ] || exit 1  # 强制验证index.html存在
-          echo "==================="
-
       - name: Deploy
         uses: peaceiris/actions-gh-pages@v3
         with:
-          github_token: ${{ secrets.DEPLOY_TOKEN }}
-          publish_branch: gh-pages
-          publish_dir: ./dist  # ✅ 修改为正确路径
-          force_orphan: true
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages  # 目标分支
+          publish_dir: ./dist       # 构建输出目录
+          force_orphan: true        # 强制清空分支历史
           commit_message: "Deploy: ${{ github.sha }}"
