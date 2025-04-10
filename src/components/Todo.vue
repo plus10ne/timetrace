@@ -174,10 +174,16 @@ export default {
   mounted() {
     // 添加全局点击事件监听，用于关闭菜单
     document.addEventListener('click', this.closeMenus);
+    
+    // 添加鼠标按下事件监听，确保在按下时就触发关闭检查
+    document.addEventListener('mousedown', this.closeMenus);
   },
   beforeUnmount() {
     // 移除全局点击事件监听
     document.removeEventListener('click', this.closeMenus);
+    
+    // 移除鼠标按下事件监听
+    document.removeEventListener('mousedown', this.closeMenus);
   },
   methods: {
     addTodo() {
@@ -199,7 +205,20 @@ export default {
     onDragStart(task, event) {
       // 关闭任何打开的菜单
       this.showTodoMenu = false;
+      this.showTaskForm = false;
       
+      // 仅在从待办列表拖拽到时间表时传递数据
+      const targetElement = event.target;
+      
+      // 判断拖拽目标是否为待办项，如果是灰色区域则阻止拖拽
+      if (targetElement.classList.contains('pending-tasks') || 
+          targetElement.classList.contains('completed-tasks') ||
+          targetElement.classList.contains('todo-container')) {
+        event.preventDefault();
+        return;
+      }
+      
+      // 设置待办信息用于拖拽
       event.dataTransfer.setData('taskId', task.id.toString());
       event.dataTransfer.setData('taskData', JSON.stringify(task));
     },
@@ -261,7 +280,7 @@ export default {
         this.showTodoMenu = false;
       }
       
-      // 如果点击是在表单之外的地方，并且不是编辑按钮，则关闭表单
+      // 如果点击是在表单之外的地方，则关闭表单
       if (this.showTaskForm && !event.target.closest('.task-form') && 
           !event.target.closest('.menu-item')) {
         this.showTaskForm = false;
@@ -279,9 +298,18 @@ export default {
     // 编辑选中的待办
     editSelectedTodo() {
       if (this.selectedTodo) {
-        // 修改为打开编辑表单而不是直接发送编辑事件
-        this.openTaskForm(this.menuPosition, this.selectedTodo);
+        // 暂存选中的待办和位置
+        const taskToEdit = {...this.selectedTodo};
+        const position = {...this.menuPosition};
+        
+        // 先关闭主菜单
         this.showTodoMenu = false;
+        
+        // 使用setTimeout确保DOM更新后再显示编辑表单
+        this.$nextTick(() => {
+          // 打开编辑表单
+          this.openTaskForm(position, taskToEdit);
+        });
       }
     },
     
