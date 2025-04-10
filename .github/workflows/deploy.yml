@@ -21,15 +21,16 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Add .nojekyll
-        run: touch dist/.nojekyll
+      - name: Verify build output
+        run: ls -la dist/
 
       - name: Deploy
         uses: peaceiris/actions-gh-pages@v3
         with:
-          # 关键修改：使用 PAT 而非默认 Token
           github_token: ${{ secrets.DEPLOY_TOKEN }}
           publish_branch: gh-pages
           publish_dir: ./dist
           force_orphan: true
-          commit_message: "Deploy: $(date -u)"
+          user_name: "GitHub Actions Bot"
+          user_email: "41898282+github-actions[bot]@users.noreply.github.com"
+          commit_message: "Deploy: ${{ github.sha }}"
