@@ -54,7 +54,7 @@ export default {
       },
       {
         id: 2,
-        name: '产品讨论会',
+        name: '产品',
         date: dayjs().format('YYYY-MM-DD'),
         startTime: '10:30',
         endTime: '11:30',

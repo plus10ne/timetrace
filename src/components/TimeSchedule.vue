@@ -131,6 +131,7 @@
               class="resize-handle-top" 
               @mousedown.stop="startResizing($event, task, 'top')"
               v-if="!task.completed"
+              :style="getResizeHandleStyle(task)"
             ></div>
             <div 
               class="task-content" 
@@ -151,6 +152,7 @@
               class="resize-handle-bottom" 
               @mousedown.stop="startResizing($event, task, 'bottom')"
               v-if="!task.completed"
+              :style="getResizeHandleStyle(task)"
             ></div>
           </div>
         </div>
@@ -231,7 +233,8 @@ export default {
       viewLabels: {
         day: '每日',
         threeDay: '三日',
-        week: '一周'
+        week: '一周',
+        clickTimer: null,
       },
       timeScale: 1.75, // 修改默认每分钟对应1.75像素
       showTaskForm: false,
@@ -457,6 +460,49 @@ export default {
       return durationMinutes < 30;
     },
     
+    // 新增方法：根据任务持续时间计算拉伸边缘高度
+    getResizeHandleStyle(task) {
+      if (!task.startTime || !task.endTime) return {};
+      
+      // 解析时间
+      const [startHour, startMinute] = task.startTime.split(':').map(Number);
+      const [endHour, endMinute] = task.endTime.split(':').map(Number);
+      
+      // 计算任务持续时间（分钟）
+      const startMinutes = startHour * 60 + startMinute;
+      const endMinutes = endHour * 60 + endMinute;
+      const durationMinutes = endMinutes - startMinutes;
+      
+      // 当持续时间大于等于30分钟时，边缘高度为标准值7px
+      if (durationMinutes >= 30) {
+        return { height: '12.25px' }; // 7px * 1.75
+      } else {
+        // 当持续时间小于30分钟时，边缘高度逐渐减小
+        // 从30分钟时的7px线性减小到5分钟时的最小值
+        const minHeight = 1.75; // 最小高度 1px * 1.75
+        const maxHeight = 12.25; // 最大高度 7px * 1.75
+        
+        // 计算5-30分钟区间的比例
+        const ratio = Math.max(0, (durationMinutes - 5) / 25);
+        
+        // 线性插值计算高度
+        const height = minHeight + ratio * (maxHeight - minHeight);
+        
+        // 确保两个边缘的总高度不超过任务块的实际高度(减去一个最小内容高度)
+        const minContentHeight = 10.5; // 最小内容高度 6px * 1.75
+        const taskHeight = durationMinutes * this.timeScale;
+        
+        // 如果两个边缘总高度会超过任务块高度，则按比例缩小
+        if (2 * height + minContentHeight > taskHeight) {
+          // 两个边缘最多占用任务块高度的80%，留20%给内容区
+          const maxEdgeHeight = (taskHeight - minContentHeight) / 2;
+          return { height: `${Math.max(minHeight, maxEdgeHeight)}px` };
+        }
+        
+        return { height: `${height}px` };
+      }
+    },
+    
     // 修改任务表单打开方法
     openTaskForm(task) {
       this.editingTask = { ...task };
@@ -549,20 +595,46 @@ export default {
         this.showTaskForm = false;
       }
     },
+
+    toggleTaskCompletion(task) {
+      if (this.clickTimer) {
+        clearTimeout(this.clickTimer);
+        this.clickTimer = null;
+      }
+      this.$emit('complete-task', task);
+    },
+
+    calcMenuPosition(event) {
+      const pos = { x: event.clientX, y: event.clientY };
+      // 确保菜单位置在可视区域内
+      return this.adjustFloatingWindowPosition(pos, 140, 120);
+    },
     
     // 任务点击处理 - 显示任务菜单
     taskClick(event, task) {
       // 隐藏鼠标悬停时间线
       this.hideHoverTimeLine();
+      // 阻止拉伸区域点击
+      if (event.target.classList.contains('resize-handle') || this.resizing?.active) return;
       
-      // 如果是拉伸区域的点击或正在拉伸中，不处理
-      if (event.target.classList.contains('resize-handle-top') || 
-          event.target.classList.contains('resize-handle-bottom') ||
-          (this.resizing && this.resizing.isResizing)) {
+      // 清除已有计时器
+      if (this.clickTimer) {
+        clearTimeout(this.clickTimer);
+        this.clickTimer = null;
         return;
       }
-      
-      // 如果已经有浮窗打开（任务菜单或表单），则关闭浮窗并阻止打开新浮窗
+
+      // 设置新的单击计时器
+      this.clickTimer = setTimeout(() => {
+        this.showTaskMenu = true;
+        this.selectedTask = task;
+        this.taskMenuPosition = this.calcMenuPosition(event);
+        this.clickTimer = null;
+      }, 200); // 200ms 延迟用于区分单击双击
+
+    // 修改后的双击处理
+
+      // 如果已经有浮窗打开（任务菜单或表单），则关闭浮窗并阻止打开新浮窗 
       if (this.showTaskMenu || this.showTaskForm) {
         this.showTaskMenu = false;
         this.showTaskForm = false;
@@ -1699,6 +1771,13 @@ export default {
   box-shadow: 0 0 8.75px rgba(0, 0, 0, 0.2); /* 5px * 1.75 */
   display: flex;
   align-items: center;
+  pointer-events: none; /* 允许点击穿透到下方元素 */
+  cursor: default;
+}
+
+.task-block > * {
+  pointer-events: auto; /* 恢复内容区域交互 */
+  
 }
 
 /* 三日和一周视图下的任务块样式 */
@@ -1713,7 +1792,7 @@ export default {
   top: 0;
   left: 0;
   right: 0;
-  height: 21px; /* 之前为10.5px，增大为21px (12px * 1.75) */
+  height: 12.25px; /* 默认高度 7px * 1.75 */
   cursor: ns-resize;
   z-index: 10; /* 确保拉伸区域始终在上层，可以被选中 */
 }
@@ -1727,7 +1806,7 @@ export default {
   bottom: 0;
   left: 0;
   right: 0;
-  height: 21px; /* 之前为10.5px，增大为21px (12px * 1.75) */
+  height: 12.25px; /* 默认高度 7px * 1.75 */
   cursor: ns-resize;
   z-index: 10; /* 确保拉伸区域始终在上层，可以被选中 */
 }
@@ -1917,6 +1996,7 @@ export default {
   overflow: hidden;
   font-size: 15.75px; /* 保持字体大小一致 */
   width: 140px; /* 缩小宽度 */
+  pointer-events: auto; /* 允许菜单交互 */
 }
 
 .menu-item {
