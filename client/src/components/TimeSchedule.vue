@@ -808,7 +808,7 @@ export default {
         // 确保与结束时间的间隔至少为5分钟
         alignedMinutes = Math.min(alignedMinutes, endTotalMinutes - 5);
         
-        const startTime = `${Math.floor(alignedMinutes / 60).toString().padStart(2, '0')}:${(alignedMinutes % 60).toString().padStart(2, '0')}`;
+        let startTime = `${Math.floor(alignedMinutes / 60).toString().padStart(2, '0')}:${(alignedMinutes % 60).toString().padStart(2, '0')}`;
         
         // 显示时间指示器
         this.showResizeTimeIndicator(alignedPosition, timeString, 'top');
