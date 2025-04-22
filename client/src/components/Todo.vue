@@ -196,6 +196,8 @@ export default {
       const date = dayjs(this.selectedDate)
       const dayStart = date.startOf('day')
       const dayEnd = date.endOf('day')
+      //task.completedAt = dayjs().toISOString()
+      //this.$emit('toggleTaskStatus',task.completedAt)
 
       return this.todos
         .filter(t => 
@@ -203,6 +205,7 @@ export default {
             dayjs(t.completedAt).isBetween(dayStart, dayEnd, null, '[]')
           )
         .sort((a,b) => new Date(a.completedAt) - new Date(b.completedAt))
+
 
     }
   },
