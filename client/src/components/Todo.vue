@@ -2,13 +2,13 @@
   <div class="todo-container">
     <!-- 待办区域 -->
     <div class="pending-tasks">
-      <h3>待办区域</h3>
+      <h3>待办区域（{{ formatHeaderDate(selectedDate) }}）</h3>
       <div class="add-todo">
-        <input 
-          type="text" 
-          v-model="newTodo" 
-          placeholder="添加每日待办..." 
-          @keyup.enter="addTodo" 
+        <input
+          type="text"
+          v-model="newTodo"
+          placeholder="添加每日待办..."
+          @keyup.enter="addTodo"
         />
         <button @click="addTodo">添加</button>
       </div>
@@ -21,21 +21,18 @@
           @dragstart="onDragStart(item, $event)"
           @click.self="openTodoMenu($event, item)"
         >
-          <input 
-            type="checkbox" 
-            :checked="item.completed" 
-            @change="toggleTask(item)" 
+          <input
+            type="checkbox"
+            :checked="item.completed"
+            @change="toggleTask(item)"
           />
-          <span 
-            v-if="editingTodoId !== item.id" 
+          <span
+            v-if="editingTodoId !== item.id"
             @click="startRenaming(item)"
             class="todo-name"
           >{{ item.name }}</span>
-          <div 
-            v-else
-            class="rename-container"
-          >
-            <input 
+          <div v-else class="rename-container">
+            <input
               type="text"
               class="rename-input"
               v-model="editingTodoName"
@@ -51,22 +48,19 @@
     </div>
     <!-- 已完成区域 -->
     <div class="completed-tasks">
-      <h3>已完成</h3>
+      <h3>已完成（{{ formatHeaderDate(selectedDate) }}）</h3>
       <ul>
-        <li 
-          v-for="item in completedTodos" 
+        <li
+          v-for="item in completedTodos"
           :key="item.id"
           @click.self="openTodoMenu($event, item)"
         >
-          <input 
-            type="checkbox" 
-            checked 
-            @change="toggleTask(item)" 
+          <input
+            type="checkbox"
+            :checked="item.completed"
+            @change="toggleTask(item)"
           />
-          <span 
-            @click="startRenaming(item)"
-            class="todo-name"
-          >{{ item.name }}</span>
+          <span @click="startRenaming(item)" class="todo-name">{{ item.name }}</span>
           <span class="task-time">
             完成于: {{ formatTime(item.completedAt) }}
           </span>
@@ -75,19 +69,21 @@
     </div>
 
     <!-- 待办菜单浮窗 -->
-    <div 
-      v-if="showTodoMenu" 
+    <div
+      v-if="showTodoMenu"
       class="todo-menu"
       :style="{ top: `${menuPosition.y}px`, left: `${menuPosition.x}px` }"
     >
-      <div @click="toggleSelectedTodo" class="menu-item">{{ selectedTodo && selectedTodo.completed ? '取消完成' : '完成' }}</div>
-      <div @click="editSelectedTodo" class="menu-item">编辑</div>
-      <div @click="deleteSelectedTodo" class="menu-item delete">删除</div>
+      <div @click="onMenuToggle()" class="menu-item">
+        {{ selectedTodo && selectedTodo.completed ? '取消完成' : '完成' }}
+      </div>
+      <div @click="onMenuEdit()" class="menu-item">编辑</div>
+      <div @click="onMenuDelete()" class="menu-item delete">删除</div>
     </div>
 
     <!-- 任务编辑表单浮窗 -->
-    <div 
-      v-if="showTaskForm" 
+    <div
+      v-if="showTaskForm"
       class="task-form"
       :style="{ top: `${formPosition.y}px`, left: `${formPosition.x}px` }"
       @click.stop
@@ -99,27 +95,27 @@
       </div>
       <div class="form-group">
         <label>待办名称</label>
-        <input 
-          type="text" 
-          v-model="editingTask.name" 
+        <input
+          type="text"
+          v-model="editingTask.name"
           placeholder="待办名称"
-          @click.stop 
+          @click.stop
         />
       </div>
       <div class="form-group">
         <label>开始时间</label>
-        <input 
-          type="time" 
+        <input
+          type="time"
           v-model="editingTask.startTime"
-          @click.stop 
+          @click.stop
         />
       </div>
       <div class="form-group">
         <label>结束时间</label>
-        <input 
-          type="time" 
+        <input
+          type="time"
           v-model="editingTask.endTime"
-          @click.stop 
+          @click.stop
         />
       </div>
       <div class="form-actions">
@@ -131,237 +127,281 @@
 </template>
 
 <script>
+import dayjs from 'dayjs'
+import isBetween from 'dayjs/plugin/isBetween'
+dayjs.extend(isBetween) // 扩展插件
+import {
+  addTodo as dbAddTodo,
+  getAllTodos,
+  updateTodo as dbUpdateTodo,
+  deleteTodo as dbDeleteTodo
+} from '../utils/db'
+
 export default {
   name: 'TodoList',
-  props: {
-    todos: {
+  props:{
+    todos:{
       type: Array,
+      required: true,
+      default: () => []  // 添加默认空数组
+    },
+    selectedDate: {
+      type: [Date, String],
       required: true
     }
   },
-  data() {
-    return {
-      newTodo: '',
-      editingTodoId: null,
-      editingTodoName: '',
-      showTodoMenu: false,
-      selectedTodo: null,
-      menuPosition: { x: 0, y: 0 },
-      editingNameWidth: 0,
-      // 新增的数据属性
-      showTaskForm: false,
-      editingTask: {
-        id: null,
-        name: '',
-        startTime: '',
-        endTime: '',
-        completed: false,
-        completedAt: null
-      },
-      formPosition: { x: 0, y: 0 }
-    }
-  },
+   data() {
+     return {
+       //todos: [],                // 所有待办
+       newTodo: '',               // 输入框内容
+       editingTodoId: null,       // 重命名时的 ID
+       editingTodoName: '',       // 重命名时的内容
+       showTodoMenu: false,       // 是否显示菜单
+       selectedTodo: null,        // 菜单作用的待办
+       isOnTimeline: false,
+       menuPosition: { x: 0, y: 0 },
+       editingNameWidth: 0,       // 重命名输入宽度
+       showTaskForm: false,       // 是否显示表单
+       editingTask: {             // 编辑表单绑定数据
+         id: null,
+         name: '',
+         startTime: '',
+         endTime: '',
+         completed: false,
+         completedAt: null
+       },
+       formPosition: { x: 0, y: 0 }
+     }
+   },
   computed: {
+    // 未完成任务列表
     pendingTodos() {
-      return this.todos.filter(t => !t.completed);
+      // 添加空值检查
+      if (!Array.isArray(this.todos)) return []
+
+      const date = dayjs(this.selectedDate)
+      const dayStart = date.startOf('day')
+      const dayEnd = date.endOf('day')
+
+      return this.todos.filter(t => 
+        !t.completed && 
+        dayjs(t.createdAt).isBetween(dayStart, dayEnd, null, '[]')
+      )
     },
+    // 完成任务列表，按完成时间排序
     completedTodos() {
+      // 添加空值检查
+      if (!Array.isArray(this.todos)) return []
+
+      const date = dayjs(this.selectedDate)
+      const dayStart = date.startOf('day')
+      const dayEnd = date.endOf('day')
+
       return this.todos
-        .filter(t => t.completed)
-        .sort((a, b) => new Date(a.completedAt) - new Date(b.completedAt));
+        .filter(t => 
+            t.completed && 
+            dayjs(t.completedAt).isBetween(dayStart, dayEnd, null, '[]')
+          )
+        .sort((a,b) => new Date(a.completedAt) - new Date(b.completedAt))
+
     }
   },
   mounted() {
-    // 添加全局点击事件监听，用于关闭菜单
-    document.addEventListener('click', this.closeMenus);
-    
-    // 添加鼠标按下事件监听，确保在按下时就触发关闭检查
-    document.addEventListener('mousedown', this.closeMenus);
+    // 全局监听
+    document.addEventListener('click', this.closeMenus)
+    document.addEventListener('mousedown', this.closeMenus)
+    document.addEventListener('keydown', this.handleKeyDown)
   },
   beforeUnmount() {
-    // 移除全局点击事件监听
-    document.removeEventListener('click', this.closeMenus);
-    
-    // 移除鼠标按下事件监听
-    document.removeEventListener('mousedown', this.closeMenus);
+    document.removeEventListener('click', this.closeMenus)
+    document.removeEventListener('mousedown', this.closeMenus)
+    document.removeEventListener('keydown', this.handleKeyDown)
   },
   methods: {
-    addTodo() {
-      if (this.newTodo.trim()) {
-        this.$emit('add-todo', {
-          id: Date.now(),
-          name: this.newTodo,
-          startTime: '',
-          endTime: '',
-          completed: false,
-          completedAt: null
-        });
-        this.newTodo = '';
+    formatHeaderDate(date) {
+      return dayjs(date).format('YYYY-MM-DD')
+    },
+    handleKeyDown(e) {
+      if (e.key === 'Escape') {
+        this.editingTodoId = null
+        this.showTaskForm = false
+        this.showTodoMenu = false
       }
     },
-    toggleTask(task) {
-      this.$emit('toggle-task', task);
+    /**
+     * 新建待办
+     * 1) 写入数据库
+     * 2) 推入本地列表
+     */
+    addTodo() {
+      const name = this.newTodo.trim()
+      if (!name) return
+      const id = `${Date.now()}-${Math.floor(Math.random() * 10000)}`
+      const task = { 
+        id, 
+        name, 
+        startTime: '', 
+        endTime: '', 
+        duration: 30, 
+        completed: false, 
+        completedAt: null,
+        createdAt: dayjs().format(), // 新增创建时间
+        isOnTimeline: false,
+      }
+      // 发给父组件真正去写库并更新 todos 列表
+      this.$emit('add-todo', task)
+
+      //清空输入框
+      this.newTodo = ''
     },
+
+    /**
+     * 菜单：切换完成状态
+     * 完成后自动关闭菜单
+     */
+    async onMenuToggle() {
+      if (!this.selectedTodo) return
+      await this.toggleTask(this.selectedTodo)
+      this.showTodoMenu = false
+      this.selectedTodo = null
+    },
+
+    /**
+     * 菜单：编辑待办
+     * 打开表单并关闭菜单
+     */
+    onMenuEdit() {
+      if (!this.selectedTodo) return
+      this.showTodoMenu = false
+      this.editSelectedTodo()
+    },
+
+    /**
+     * 菜单：删除待办
+     * 删除后自动关闭菜单
+     */
+    async onMenuDelete() {
+      if (!this.selectedTodo) return
+      await this.deleteSelectedTodo()
+    },
+
+    /**
+     * 删除选中的待办
+     */
+    deleteSelectedTodo() {
+      // if (!this.selectedTodo) return
+      // await dbDeleteTodo(this.selectedTodo.id)
+      // this.todos = this.todos.filter(t => t.id !== this.selectedTodo.id)
+      // this.selectedTodo = null
+      // this.showTodoMenu = false
+      this.showTodoMenu = false
+      this.$emit('delete-todo', this.selectedTodo)
+    },
+
+    /**
+     * 切换完成状态
+     * 直接修改数组元素以触发响应式
+     */
+    toggleTask(task) {
+      // const idx = this.todos.findIndex(t => t.id === task.id)
+      // if (idx === -1) return
+      // const updated = { ...this.todos[idx] }
+      // updated.completed = !updated.completed
+      // updated.completedAt = updated.completed ? dayjs().format() : null
+      // await dbUpdateTodo(updated)
+      // this.todos[idx] = updated
+      
+      task.completed = !task.completed
+      this.$emit('toggle-task', task)
+    },
+
+    /** 开始重命名 */
+    startRenaming(todo) {
+      this.showTodoMenu = false
+      this.editingTodoId = todo.id
+      this.editingTodoName = todo.name
+      this.editingNameWidth = Math.max(todo.name.length * 10, 80)
+      this.$nextTick(() => this.$refs.renameInput?.focus())
+    },
+
+    /** 完成重命名 */
+    finishRenaming() {
+      // if (!this.editingTodoId) return
+      // const idx = this.todos.findIndex(t => t.id === this.editingTodoId)
+      // if (idx !== -1 && this.editingTodoName.trim()) {
+      //   const updated = { ...this.todos[idx], name: this.editingTodoName.trim() }
+      //   await dbUpdateTodo(updated)
+      //   this.todos[idx] = updated
+      // }
+      // this.editingTodoId = null
+      // this.editingTodoName = ''
+        this.$emit('rename-todo', {
+        id: this.editingTodoId,
+        name: this.editingTodoName.trim()
+      })
+      this.editingTodoId = null
+    },
+
+    /** 打开菜单 */
+    openTodoMenu(event, todo) {
+      this.selectedTodo = todo
+      this.menuPosition = { x: event.clientX, y: event.clientY }
+      this.showTodoMenu = true
+      event.stopPropagation()
+    },
+
+    /** 点击空白区域关闭菜单或表单 */
+    closeMenus(event) {
+      if (this.showTodoMenu && !event.target.closest('.todo-menu')) this.showTodoMenu = false
+      if (this.showTaskForm && !event.target.closest('.task-form') && !event.target.closest('.menu-item'))
+        this.showTaskForm = false
+    },
+
+    /** 打开编辑表单 */
+    editSelectedTodo() {
+      this.editingTask = { ...this.selectedTodo }
+      this.formPosition = { ...this.menuPosition }
+      this.showTaskForm = true
+    },
+
+    /** 取消编辑表单 */
+    cancelTaskForm() {
+      this.showTaskForm = false
+      this.editingTask = { id: null, name: '', startTime: '', endTime: '', completed: false, completedAt: null }
+    },
+
+    /** 保存编辑后的任务 */
+    async saveTask() {
+      if (!this.editingTask.name.trim()) return
+      const updated = { ...this.editingTask }
+      await dbUpdateTodo(updated)
+      const idx = this.todos.findIndex(t => t.id === updated.id)
+      if (idx !== -1) this.todos[idx] = updated
+      this.cancelTaskForm()
+    },
+
+    /** 拖拽开始 */
     onDragStart(task, event) {
       // 关闭任何打开的菜单
-      this.showTodoMenu = false;
-      this.showTaskForm = false;
-      
-      // 仅在从待办列表拖拽到时间表时传递数据
-      const targetElement = event.target;
-      
-      // 判断拖拽目标是否为待办项，如果是灰色区域则阻止拖拽
-      if (targetElement.classList.contains('pending-tasks') || 
-          targetElement.classList.contains('completed-tasks') ||
-          targetElement.classList.contains('todo-container')) {
-        event.preventDefault();
-        return;
-      }
-      
-      // 设置待办信息用于拖拽
-      event.dataTransfer.setData('taskId', task.id.toString());
-      event.dataTransfer.setData('taskData', JSON.stringify(task));
+      this.showTodoMenu = false
+      this.showTaskForm = false
+
+      const offsetY = event.offsetY
+
+      event.dataTransfer.setData('taskId',     task.id.toString())
+      event.dataTransfer.setData('offsetY',   offsetY.toString())
+      event.dataTransfer.setData('taskData',  JSON.stringify(task))
+
+      // 标记这次要做“移动”操作
+      event.dataTransfer.effectAllowed = 'move'
+      console.log('开始拖拽任务:', task.id, task.name)
     },
-    formatTime(timestamp) {
-      if (!timestamp) return '';
-      const date = new Date(timestamp);
-      return `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
-    },
-    
-    // 开始重命名待办
-    startRenaming(todo) {
-      this.showTodoMenu = false; // 关闭菜单
-      this.editingTodoId = todo.id;
-      this.editingTodoName = todo.name;
-      
-      // 根据待办名称长度估算输入框宽度
-      // 每个字符大约10px，最小宽度为80px
-      this.editingNameWidth = Math.max(todo.name.length * 10, 80);
-      
-      this.$nextTick(() => {
-        if (this.$refs.renameInput) {
-          this.$refs.renameInput.focus();
-          this.$refs.renameInput.select(); // 选中全部文本
-        }
-      });
-    },
-    
-    // 完成重命名
-    finishRenaming() {
-      if (this.editingTodoId !== null) {
-        if (this.editingTodoName.trim()) {
-          // 发出重命名事件
-          this.$emit('rename-todo', {
-            id: this.editingTodoId,
-            name: this.editingTodoName.trim()
-          });
-        }
-        this.editingTodoId = null;
-        this.editingTodoName = '';
-      }
-    },
-    
-    // 打开待办菜单
-    openTodoMenu(event, todo) {
-      // 设置选中的待办并显示待办操作菜单
-      this.selectedTodo = todo;
-      this.menuPosition = {
-        x: event.clientX,
-        y: event.clientY
-      };
-      this.showTodoMenu = true;
-      event.stopPropagation(); // 阻止冒泡
-    },
-    
-    // 关闭菜单
-    closeMenus(event) {
-      // 如果点击是在菜单之外的地方，则关闭菜单
-      if (this.showTodoMenu && !event.target.closest('.todo-menu')) {
-        this.showTodoMenu = false;
-      }
-      
-      // 如果点击是在表单之外的地方，则关闭表单
-      if (this.showTaskForm && !event.target.closest('.task-form') && 
-          !event.target.closest('.menu-item')) {
-        this.showTaskForm = false;
-      }
-    },
-    
-    // 切换选中待办的完成状态
-    toggleSelectedTodo() {
-      if (this.selectedTodo) {
-        this.toggleTask(this.selectedTodo);
-        this.showTodoMenu = false;
-      }
-    },
-    
-    // 编辑选中的待办
-    editSelectedTodo() {
-      if (this.selectedTodo) {
-        // 暂存选中的待办和位置
-        const taskToEdit = {...this.selectedTodo};
-        const position = {...this.menuPosition};
-        
-        // 先关闭主菜单
-        this.showTodoMenu = false;
-        
-        // 使用setTimeout确保DOM更新后再显示编辑表单
-        this.$nextTick(() => {
-          // 打开编辑表单
-          this.openTaskForm(position, taskToEdit);
-        });
-      }
-    },
-    
-    // 删除选中的待办
-    deleteSelectedTodo() {
-      if (this.selectedTodo) {
-        this.$emit('delete-todo', this.selectedTodo);
-        this.showTodoMenu = false;
-      }
-    },
-    
-    // 打开任务编辑表单
-    openTaskForm(position, task) {
-      // 克隆任务对象，确保不直接修改原对象
-      this.editingTask = { ...task };
-      
-      // 调整表单位置，确保在视口内可见
-      this.formPosition = {
-        x: Math.min(position.x, window.innerWidth - 300),
-        y: Math.min(position.y, window.innerHeight - 300)
-      };
-      
-      // 设置表单可见
-      this.showTaskForm = true;
-      
-      // 添加控制台日志以便于调试
-      console.log("打开编辑表单", this.showTaskForm, this.editingTask);
-    },
-    
-    // 保存编辑后的任务
-    saveTask() {
-      if (!this.editingTask.name.trim()) {
-        this.editingTask.name = '新待办';
-      }
-      
-      // 如果任务存在ID，表示是编辑已有任务
-      if (this.editingTask.id) {
-        // 确保有日期字段
-        if (!this.editingTask.date) {
-          this.editingTask.date = new Date().toISOString().split('T')[0];
-        }
-        
-        console.log("保存编辑的任务", this.editingTask);
-        this.$emit('update-todo', this.editingTask);
-      }
-      
-      this.showTaskForm = false;
-    },
-    
-    // 取消编辑表单
-    cancelTaskForm() {
-      this.showTaskForm = false;
+
+    /** 时间格式化 */
+    formatTime(ts) {
+      if (!ts) return ''
+      const d = new Date(ts)
+      return `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`
     }
   }
 }
@@ -371,7 +411,7 @@ export default {
 .todo-container {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  height: calc(100vh - 60px); /* 根据实际布局调整 */
   overflow: hidden;
   position: relative;
 }
@@ -384,11 +424,12 @@ export default {
 }
 
 .completed-tasks {
-  flex: 1;
+  flex: 1 1 50%;
   overflow-y: auto;
   border-top: 1px solid #eee;
   padding-top: 10px;
   max-height: 50%;
+  min-height: 200px; /* 确保最小高度 */
 }
 
 h3 {

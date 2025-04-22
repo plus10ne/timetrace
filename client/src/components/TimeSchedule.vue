@@ -1,5 +1,4 @@
 <template>
-  
   <div class="time-schedule">
     <!-- 视图切换按钮 -->
     <div class="view-controls">
@@ -87,10 +86,10 @@
         </template>
       </div>
 
-      <!-- 时间格子区域 -->
+      <!-- 时间格子区域 @click="onTimelineClick" -->
       <div 
         class="timeline-grid"
-        @click="onTimelineClick"
+        
         @dragover.prevent="onDragOver"
         @drop="onDrop"
       >
@@ -115,7 +114,7 @@
             :style="{ top: `${hour * 60 * timeScale}px` }"
           ></div>
 
-          <!-- 任务块 -->
+          <!-- 任务块 @dblclick="toggleTaskCompletion(task)" -->
           <div 
             v-for="task in getTasksForDate(date)"
             :key="task.id"
@@ -123,7 +122,7 @@
             :class="{ completed: task.completed }"
             :style="getTaskStyle(task)"
             @click.stop="taskClick($event, task)"
-            @dblclick="toggleTaskCompletion(task)"
+            
             draggable="true"
             @dragstart="onTaskDragStart($event, task)"
           >
@@ -218,13 +217,15 @@
 
 <script>
 import dayjs from 'dayjs';
-
+import isBetween from 'dayjs/plugin/isBetween'
+dayjs.extend(isBetween) // 扩展插件
 export default {
   name: 'TimeSchedule',
   props: {
     todos: {
       type: Array,
-      required: true
+      required: true,
+      isOnTimeline: false
     }
   },
   data() {
@@ -239,7 +240,7 @@ export default {
       timeScale: 1.75, // 修改默认每分钟对应1.75像素
       showTaskForm: false,
       showTaskMenu: false,
-      showContextMenu: false,
+      //showContextMenu: false,
       formPosition: { x: 0, y: 0 },
       taskMenuPosition: { x: 0, y: 0 },
       contextMenuPosition: { x: 0, y: 0 },
@@ -326,15 +327,17 @@ export default {
       return totalMinutes * this.timeScale;
     }
   },
+    
   mounted() {
     // 全局事件监听
-    window.addEventListener('mousemove', this.onMouseMove);
-    window.addEventListener('mouseup', this.stopResizing);
+    //window.addEventListener('mousemove', this.onMouseMove);
+    window.addEventListener('mouseup', this.endResizing);
     window.addEventListener('click', this.closeMenus);
     window.addEventListener('resize', this.onWindowResize);
     
     // 添加全局点击监听，用于关闭浮窗
     document.addEventListener('click', this.closeAllFloatingWindows);
+    document.addEventListener('keydown', this.handleKeyDown)
     
     // 初始设置时间单位比例和同步高度
     this.calculateTimeScale();
@@ -355,13 +358,14 @@ export default {
   },
   beforeUnmount() {
     // 清除全局事件监听
-    window.removeEventListener('mousemove', this.onMouseMove);
-    window.removeEventListener('mouseup', this.stopResizing);
+    //window.removeEventListener('mousemove', this.onMouseMove);
+    window.removeEventListener('mouseup', this.endResizing);
     window.removeEventListener('click', this.closeMenus);
     window.removeEventListener('resize', this.onWindowResize);
     
     // 移除全局点击监听
     document.removeEventListener('click', this.closeAllFloatingWindows);
+    document.removeEventListener('keydown', this.handleKeyDown)
     
     // 清除高度观察器
     if (this.heightObserver) {
@@ -373,7 +377,162 @@ export default {
       clearInterval(this.currentTimeInterval);
     }
   },
+  
   methods: {
+    handleKeyDown(e) {
+      if (e.key === 'Escape') {
+        this.editingTodoId = null
+        this.showTaskForm = false
+        this.showTodoMenu = false
+      }
+    },
+
+
+  parseTimeToMinutes(timeStr) {
+    const [h, m] = timeStr.split(':').map(Number);
+    return h * 60 + m;
+  },
+
+  // 开始拉伸：绑 mousemove 和 mouseup
+  startResizing(event, task, edge) {
+    if (task.completed) return;  // 已完成不许改
+    event.stopPropagation();     // 阻止点击展开菜单等
+
+    // 拷一份当前 task，让我们在本地修改
+    this.resizing = {
+      active: true,
+      task: { ...task },
+      edge  // 'top' or 'bottom'
+    };
+
+    // 绑定移动和结束
+    document.addEventListener('mousemove', this.onResizing);
+    document.addEventListener('mouseup', this.endResizing, { once: true });
+  },
+
+    // 拉伸过程：实时计算新的 startTime / endTime
+    onResizing(event) {
+    if (!this.resizing.active) return;
+
+    // 计算鼠标相对于时间轴的分钟数
+    const rect = this.$refs.timelineContainer.getBoundingClientRect();
+    let y = event.clientY - rect.top + this.$refs.timelineContainer.scrollTop;
+    y = Math.max(0, Math.min(y, 24*60*this.timeScale));
+    const minutes = Math.round((y / this.timeScale) / 5) * 5;
+
+    // 根据是 top 还是 bottom, 保证 at least 5 分钟的最小长度
+    const r = this.resizing;
+    if (r.edge === 'top') {
+      const endMin = this.parseTimeToMinutes(r.task.endTime);
+      const newStart = Math.min(minutes, endMin - 5);
+      r.task.startTime = `${String(Math.floor(newStart/60)).padStart(2,'0')}:${
+                      String(newStart % 60).padStart(2,'0')}`;
+    } else {
+      const startMin = this.parseTimeToMinutes(r.task.startTime);
+      const newEnd = Math.max(minutes, startMin + 5);
+      r.task.endTime = `${String(Math.floor(newEnd/60)).padStart(2,'0')}:${
+                      String(newEnd % 60).padStart(2,'0')}`;
+    }
+
+    // —— 新增：重新计算 duration —— 
+    const startMin = this.parseTimeToMinutes(r.task.startTime);
+    const endMin   = this.parseTimeToMinutes(r.task.endTime);
+    r.task.duration = endMin - startMin;
+    //console.info(r.task.duration)
+
+    // 通知父组件：更新任务时间
+    this.$emit('update-task-time', { ...r.task });
+  },
+
+  // 拉伸结束：解绑 listener
+  endResizing() {
+    this.resizing.active = false;
+    document.removeEventListener('mousemove', this.onResizing);
+  },
+
+      // 确保浮窗在视窗内可见
+      adjustFloatingWindowPosition(position, windowWidth, windowHeight) {
+      const safeMargin = 25; // 安全边距，防止窗口太靠近边缘
+      
+      // 获取视窗尺寸和滚动位置
+      const viewport = {
+        width: window.innerWidth,
+        height: window.innerHeight,
+        scrollX: window.pageXOffset || document.documentElement.scrollLeft,
+        scrollY: window.pageYOffset || document.documentElement.scrollTop
+      };
+      
+      // 创建新的位置对象，避免修改原始对象
+      const adjustedPosition = {
+        x: position.x,
+        y: position.y
+      };
+      
+      // 处理X轴位置 - 考虑滚动位置
+      // 如果窗口超出右边界
+      if (adjustedPosition.x + windowWidth > viewport.width + viewport.scrollX - safeMargin) {
+        // 如果窗口宽度超过视窗宽度，则居中显示
+        if (windowWidth > viewport.width - 2 * safeMargin) {
+          adjustedPosition.x = viewport.scrollX + safeMargin;
+        } else {
+          adjustedPosition.x = viewport.width + viewport.scrollX - windowWidth - safeMargin;
+        }
+      }
+      
+      // 确保X轴不小于安全边距（考虑滚动）
+      if (adjustedPosition.x < viewport.scrollX + safeMargin) {
+        adjustedPosition.x = viewport.scrollX + safeMargin;
+      }
+      
+      // 处理Y轴位置 - 考虑滚动位置
+      // 如果窗口超出底部边界
+      if (adjustedPosition.y + windowHeight > viewport.height + viewport.scrollY - safeMargin) {
+        // 如果窗口高度超过视窗高度，则从顶部显示
+        if (windowHeight > viewport.height - 2 * safeMargin) {
+          adjustedPosition.y = viewport.scrollY + safeMargin;
+        } else {
+          adjustedPosition.y = viewport.height + viewport.scrollY - windowHeight - safeMargin;
+        }
+      }
+      
+      // 确保Y轴不小于安全边距（考虑滚动）
+      if (adjustedPosition.y < viewport.scrollY + safeMargin) {
+        adjustedPosition.y = viewport.scrollY + safeMargin;
+      }
+      
+      // 最终检查确保位置在视窗范围内
+      adjustedPosition.x = Math.max(viewport.scrollX + safeMargin, 
+                           Math.min(adjustedPosition.x, 
+                                   viewport.width + viewport.scrollX - windowWidth - safeMargin));
+      adjustedPosition.y = Math.max(viewport.scrollY + safeMargin, 
+                           Math.min(adjustedPosition.y, 
+                                   viewport.height + viewport.scrollY - windowHeight - safeMargin));
+      
+      return adjustedPosition;
+    },
+
+    // 同步面板高度
+    syncPanelHeight() {
+      if (!this.$refs.timelineContainer) return;
+      
+      const container = this.$refs.timelineContainer;
+      const leftPanel = document.querySelector('.left-panel');
+      
+      // 动态计算可用高度
+      const baseHeight = leftPanel?.clientHeight || 700;
+      const availableHeight = baseHeight - 140; // 减去顶部控件高度
+      
+      // 设置容器高度
+      container.style.minHeight = `${availableHeight}px`;
+      container.style.maxHeight = `${availableHeight}px`;
+      
+      // 同步内部网格高度
+      const grid = container.querySelector('.timeline-grid');
+      if (grid) {
+        grid.style.minHeight = `${24 * 60 * this.timeScale}px`;
+      }
+    },
+
     setView(view) {
       this.currentView = view;
       this.$nextTick(() => {
@@ -393,10 +552,10 @@ export default {
     getTasksForDate(date) {
       // 过滤出当天的任务
       const dateStr = date.format('YYYY-MM-DD');
-      return this.todos.filter(task => {
-        // 只显示有日期且日期匹配的任务
-        return task.date === dateStr && task.startTime && task.endTime;
-      });
+      return this.todos
+      .filter(task =>  task.isOnTimeline)
+      .filter(task => task.date === dateStr)
+      .filter(task => task.startTime && task.endTime)
     },
     
     getTaskStyle(task) {
@@ -530,8 +689,7 @@ export default {
       // 如果点击的是任务或者菜单，不创建任务
       if (event.target.closest('.task-block') || 
           this.showTaskForm || 
-          this.showTaskMenu || 
-          this.showContextMenu) {
+          this.showTaskMenu) {
         return;
       }
       
@@ -568,7 +726,7 @@ export default {
         // 创建新任务
         this.$emit('add-task', {
           ...this.editingTask,
-          id: Date.now(),
+          id: crypto.randomUUID(),
           completedAt: null
         });
       }
@@ -673,15 +831,13 @@ export default {
       );
       
       this.showTaskMenu = true;
-      event.stopPropagation(); // 阻止冒泡，防止触发时间轴点击
+      //event.stopPropagation(); // 阻止冒泡，防止触发时间轴点击
     },
     
     // 完成选中的任务
     completeSelectedTask() {
-      if (this.selectedTask) {
-        this.toggleTaskCompletion(this.selectedTask);
-        this.showTaskMenu = false;
-      }
+      this.$emit('complete-task', this.selectedTask)
+      this.showTaskMenu = false
     },
     
     // 编辑选中的任务
@@ -730,38 +886,17 @@ export default {
     
     // 删除选中的任务
     deleteSelectedTask() {
-      if (this.selectedTask) {
-        this.$emit('delete-task', this.selectedTask);
-        this.showTaskMenu = false;
-      }
+      // 标记不在时间轴上
+      this.$emit('delete-task', this.selectedTask)
+      this.showTaskMenu = false
     },
-    
-    startResizing(event, task, edge) {
-      // 隐藏鼠标悬停时间线
-      this.hideHoverTimeLine();
-      
-      // 如果任务已完成，不允许调整大小
-      if (task.completed) {
-        event.preventDefault();
-        event.stopPropagation(); 
-        return;
+
+    // 隐藏拉伸时的时间指示器
+    hideResizeTimeIndicator() {
+      const indicator = document.getElementById('resize-time-indicator');
+      if (indicator) {
+        document.body.removeChild(indicator);
       }
-      
-      // 保存当前任务和调整方向
-      this.resizing = {
-        active: true,
-        task: { ...task },
-        edge: edge,
-        initialY: event.clientY,
-        initialTime: edge === 'top' ? task.startTime : task.endTime,
-        isResizing: true  // 添加标记表示正在拉伸
-      };
-      
-      // 添加mouseup事件监听器
-      document.addEventListener('mouseup', this.handleResizeEnd, { once: true });
-      
-      event.preventDefault(); // 防止触发拖拽
-      event.stopPropagation(); // 阻止冒泡
     },
     
     handleResizeEnd() {
@@ -836,68 +971,128 @@ export default {
         });
       }
     },
-    
-    stopResizing() {
-      // 设置标记表示刚刚结束了拉伸操作
-      if (this.resizing) {
-        this.resizing.isResizing = true;
-        
-        setTimeout(() => {
-          this.resizing.isResizing = false;
-        }, 300); // 延迟300毫秒后清除标记
-      }
-      
-      this.resizing.active = false;
-      // 移除时间指示器
-      const indicator = document.getElementById('resize-time-indicator');
-      if (indicator) {
-        document.body.removeChild(indicator);
-      }
+   
+    hideHoverTimeLine() {
+      this.showHoverTimeLine = false
     },
-    
-    onDragOver(event) {
-      event.preventDefault();
-      
-      // 获取时间刻度区域位置
-      const timelineRect = this.getTimelineRect();
-      
-      // 确保鼠标在时间轴区域内
-      if (this.isMouseOverTimeline(event)) {
-        // 计算鼠标位置对应的时间
-        let yPosition = event.clientY - timelineRect.top + this.$refs.timelineContainer.scrollTop;
-        
-        // 考虑拖拽偏移
-        if (this.dragInfo.offsetY) {
-          yPosition -= this.dragInfo.offsetY;
-        }
-        
-        // 确保值在有效范围内
-        yPosition = Math.max(0, yPosition);
-        
-        // 计算分钟
-        const minutes = Math.floor(yPosition / this.timeScale);
-        
-        // 将分钟对齐到最近的5分钟，使用Math.round实现更自然的磁吸效果
-        const alignedMinutes = Math.round(minutes / 5) * 5;
-        
-        // 计算对齐后的实际像素位置
-        const alignedPosition = (alignedMinutes * this.timeScale);
-        
-        // 计算小时和分钟
-        const hour = Math.floor(alignedMinutes / 60);
-        const minute = alignedMinutes % 60;
-        
-        // 格式化时间字符串
-        const timeString = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
-        
-        // 显示时间指示器，使用对齐后的位置
-        this.showDragTimeIndicator(alignedPosition, timeString);
+
+    /** 从 Todo.vue 拖来的任务，开始拖拽时捕获偏移 */
+    onTaskDragStart(event, task) {
+      // 创建纯数据副本
+      const taskData = {
+        id: task.id,
+        name: task.name,
+        //date: task.date,
+        duration: task.duration,
+        startTime: task.startTime,
+        endTime: task.endTime,
+        completed: task.completed,
+        completedAt: task.completedAt,
+        isOnTimeline: task.isOnTimeline,
+      };
+
+      event.dataTransfer.setData('taskData', JSON.stringify(taskData)); // ✅ 安全序列化
+
+      // const rect = event.target.getBoundingClientRect()
+      // const offsetY = event.clientY - rect.top
+      // event.dataTransfer.setData('taskId', task.id.toString())
+      // event.dataTransfer.setData('taskData', JSON.stringify(task))
+      // event.dataTransfer.setData('offsetY', offsetY.toString())  // 这里保存偏移量
+      // this.dragInfo = { taskId: task.id.toString(), offsetY }
+    },
+
+    pad(num) {
+      return num.toString().padStart(2, '0')
+    },
+
+     /** 拖拽悬停：显示对齐提示线 */
+     onDragOver(event) {
+      event.preventDefault()
+      const rect = this.getTimelineRect()
+      if (!this.isMouseOverTimeline(event)) {
+        this.showHoverTimeLine = false
+        return
+      }
+      let y = event.clientY - rect.top + this.$refs.timelineContainer.scrollTop
+      y -= this.dragInfo.offsetY
+      y = Math.max(0, y)
+      const minutes = Math.floor(y / this.timeScale)
+      const aligned = Math.round(minutes / 5) * 5
+      this.hoverTimePosition = aligned * this.timeScale
+      const hh = Math.floor(aligned / 60), mm = aligned % 60
+      this.hoverTimeText = `${this.pad(hh)}:${this.pad(mm)}`
+      this.showHoverTimeLine = true
+    },
+
+    // 放下时：解析完整对象，填上 date/start/end，然后 emit 给父组件
+    async onDrop(event) {
+      event.preventDefault()
+      this.showHoverTimeLine = false
+
+      // —— 1) 解析拖进来的数据 —— 
+      const raw = event.dataTransfer.getData('taskData')
+      if (!raw) return
+      const task = JSON.parse(raw)
+
+      // —— 2) 计算对齐后的 startTime —— 
+      const rect = this.getTimelineRect()
+      let y = event.clientY - rect.top + this.$refs.timelineContainer.scrollTop - this.dragInfo.offsetY
+      y = Math.max(0, y)
+      const minutes = Math.floor(y / this.timeScale)
+      const aligned = Math.max(0, Math.min(Math.round(minutes / 5) * 5, 24*60 - 5))
+      const hh = Math.floor(aligned / 60), mm = aligned % 60
+      const startTime = `${this.pad(hh)}:${this.pad(mm)}`
+
+      // —— 3) 区分「新调度」还是「已排期」 —— 
+      const isExisting = !!task.isOnTimeline
+
+      // —— 4) 决定用哪个 duration —— 
+      let duration
+      if (isExisting) {
+        // 已在时间轴的：重新从最新 this.todos 中拿它的 duration
+        const original = this.todos.find(t => t.id === task.id)
+        duration = original?.duration ?? task.duration ?? 30
       } else {
-        // 隐藏时间指示器
-        this.hideDragTimeIndicator();
+        // 新调度：用它原来的 duration（或 30 分钟默认）
+        duration = task.duration ?? 30
       }
+
+      // —— 5) 用 duration 推算 endTime —— 
+      const endMin = Math.min(aligned + duration, 24*60 - 1)
+      const eh = Math.floor(endMin / 60), em = endMin % 60
+      const endTime = `${this.pad(eh)}:${this.pad(em)}`
+
+      // —— 6) 取到日期列 —— 
+      const col = event.target.closest('.date-column')
+      const dateStr = col?.dataset.date
+      if (!dateStr) return
+
+      // —— 7) 分别通知父组件 —— 
+      if (isExisting) {
+        // 只是移动已有任务：更新时、分发到父的 update-task-time 里
+        this.$emit('update-task-time', {
+          id:        task.id,
+          date:      dateStr,
+          startTime,
+          endTime,
+          duration
+        })
+      } else {
+        // 从左侧首次拖入：打上 isOnTimeline 并分发到 schedule-task
+        this.$emit('schedule-task', {
+          ...task,
+          isOnTimeline: true,
+          date:         dateStr,
+          startTime,
+          endTime,
+          duration
+        })
+      }
+
+      // —— 8) 清理掉拖拽状态 —— 
+      this.dragInfo = { taskId: null, offsetY: 0 }
     },
-    
+
     // 判断鼠标是否在时间轴区域内
     isMouseOverTimeline(event) {
       const timelineContainer = this.$refs.timelineContainer;
@@ -986,150 +1181,57 @@ export default {
         this.hideDragTimeIndicator();
       }, { once: true });
     },
-    
-    onDrop(event) {
-      // 隐藏时间指示器
-      this.hideDragTimeIndicator();
 
-      // 阻止默认行为
-      event.preventDefault();
-      
-      const taskId = event.dataTransfer.getData('taskId');
-      if (!taskId) return;
-      
-      // 计算放置位置对应的时间
-      const rect = this.getTimelineRect();
-      
-      // 考虑鼠标与任务顶部的偏移量，计算任务顶部应该在的位置
-      let yOffset = 0;
-      
-      // 确保拖拽的是同一个任务
-      if (this.dragInfo.taskId === taskId) {
-        yOffset = this.dragInfo.offsetY;
-      }
-      
-      // 调整Y位置，考虑鼠标与任务顶部的偏移量
-      const y = (event.clientY - yOffset) - rect.top + this.$refs.timelineContainer.scrollTop;
-      const dateColumn = event.target.closest('.date-column');
-      
-      if (!dateColumn) {
-        this.resetDraggedTask(taskId);
+        // 处理鼠标在时间轴上移动
+        handleTimelineMouseMove(event) {
+      // 如果有弹窗显示或正在拉伸，不显示悬停时间线
+      if (this.showTaskForm || this.showTaskMenu || this.resizing.active) {
+        this.hideHoverTimeLine();
         return;
       }
       
-      const dateStr = dateColumn.dataset.date;
-      const minutes = Math.floor(y / this.timeScale);
+      // 检查鼠标是否在任务块上
+      if (event.target.closest('.task-block')) {
+        this.hideHoverTimeLine();
+        return;
+      }
       
-      // 将分钟对齐到最近的5分钟
-      // 使用Math.round而不是Math.floor，这样可以更自然地吸附到最近的5分钟刻度
-      const alignedMinutes = Math.max(0, Math.min(Math.round(minutes / 5) * 5, 24 * 60 - 5));
+      // 获取时间刻度区域位置
+      const timelineRect = this.getTimelineRect();
+      
+      // 计算鼠标位置对应的时间
+      const yPosition = event.clientY - timelineRect.top + this.$refs.timelineContainer.scrollTop;
+      
+      // 计算分钟数
+      const minutes = Math.floor(yPosition / this.timeScale);
+      
+      // 确保时间在有效范围内 (0:00 - 23:59)
+      if (minutes < 0 || minutes >= 24 * 60) {
+        this.hideHoverTimeLine();
+        return;
+      }
       
       // 计算小时和分钟
-      const hour = Math.floor(alignedMinutes / 60);
-      const minute = alignedMinutes % 60;
+      const hour = Math.floor(minutes / 60);
+      const minute = minutes % 60;
       
-      // 设置开始时间
-      const startTime = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
+      // 格式化时间文本
+      this.hoverTimeText = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
       
-      // 查找被拖拽的任务
-      const task = this.todos.find(t => t.id.toString() === taskId);
-      if (task) {
-        // 计算当前任务的持续时间（分钟）
-        let durationMinutes = 30; // 默认30分钟
-        
-        if (task.startTime && task.endTime) {
-          const [taskStartHour, taskStartMinute] = task.startTime.split(':').map(Number);
-          const [taskEndHour, taskEndMinute] = task.endTime.split(':').map(Number);
-          durationMinutes = (taskEndHour * 60 + taskEndMinute) - (taskStartHour * 60 + taskStartMinute);
-        }
-        
-        // 计算新结束时间（保持持续时间不变）
-        let newEndMinutes = alignedMinutes + durationMinutes;
-        
-        // 检查结束时间是否超出24小时
-        if (newEndMinutes >= 24 * 60) {
-          // 如果超出范围，调整持续时间
-          newEndMinutes = 24 * 60 - 1; // 限制到23:59
-          // 重新计算开始时间，确保任务持续时间不变
-          const adjustedStartMinutes = newEndMinutes - durationMinutes;
-          if (adjustedStartMinutes >= 0) {
-            const adjustedStartHour = Math.floor(adjustedStartMinutes / 60);
-            const adjustedStartMinute = adjustedStartMinutes % 60;
-            const adjustedStartTime = `${adjustedStartHour.toString().padStart(2, '0')}:${adjustedStartMinute.toString().padStart(2, '0')}`;
-            // 更新开始时间
-            startTime = adjustedStartTime;
-          }
-        }
-        
-        const newEndHour = Math.floor(newEndMinutes / 60);
-        const newEndMinute = newEndMinutes % 60;
-        const endTime = `${newEndHour.toString().padStart(2, '0')}:${newEndMinute.toString().padStart(2, '0')}`;
-        
-        // 检查是否与其他任务有重叠
-        const overlappingTasks = this.checkForOverlappingTasks(dateStr, startTime, endTime, task.id);
-        
-        if (overlappingTasks.length > 0) {
-          // 找出重叠任务中开始时间最早的那个
-          const firstOverlap = overlappingTasks.reduce((earliest, current) => {
-            const [earliestHour, earliestMinute] = earliest.startTime.split(':').map(Number);
-            const [currentHour, currentMinute] = current.startTime.split(':').map(Number);
-            
-            const earliestMinutes = earliestHour * 60 + earliestMinute;
-            const currentMinutes = currentHour * 60 + currentMinute;
-            
-            return earliestMinutes < currentMinutes ? earliest : current;
-          });
-          
-          // 计算重叠任务的开始时间（分钟）
-          const [overlapHour, overlapMinute] = firstOverlap.startTime.split(':').map(Number);
-          const overlapStartMinutes = overlapHour * 60 + overlapMinute;
-          
-          // 调整结束时间，使其不与重叠任务重叠
-          if (overlapStartMinutes <= alignedMinutes) {
-            // 如果重叠任务的开始时间在当前任务的开始时间之前或相同，则无法放置
-            this.resetDraggedTask(taskId);
-            return;
-          }
-          
-          // 否则，缩短当前任务的持续时间
-          const newDurationMinutes = overlapStartMinutes - alignedMinutes;
-          
-          // 如果缩短后的持续时间不足15分钟，则取消拖拽
-          if (newDurationMinutes < 15) {
-            this.resetDraggedTask(taskId);
-            return;
-          }
-          
-          // 更新结束时间
-          newEndMinutes = alignedMinutes + newDurationMinutes;
-          const adjustedEndHour = Math.floor(newEndMinutes / 60);
-          const adjustedEndMinute = newEndMinutes % 60;
-          const adjustedEndTime = `${adjustedEndHour.toString().padStart(2, '0')}:${adjustedEndMinute.toString().padStart(2, '0')}`;
-          
-          // 更新任务的时间信息
-          this.$emit('schedule-task', {
-            ...task,
-            date: dateStr,
-            startTime,
-            endTime: adjustedEndTime
-          });
-        } else {
-          // 无重叠，正常更新任务的时间信息
-          this.$emit('schedule-task', {
-            ...task,
-            date: dateStr,
-            startTime,
-            endTime
-          });
-        }
-        
-        // 清理拖拽信息
-        this.dragInfo = { offsetY: 0, taskId: null, originalTask: null };
-      }
+      // 设置时间线位置
+      this.hoverTimePosition = yPosition;
+      
+      // 显示时间线
+      this.showHoverTimeLine = true;
     },
     
-    // 添加新方法检查任务重叠
-    checkForOverlappingTasks(date, startTime, endTime, taskId) {
+    // 隐藏鼠标悬停时间线
+    hideHoverTimeLine() {
+      this.showHoverTimeLine = false;
+    },
+
+        // 添加新方法检查任务重叠
+        checkForOverlappingTasks(date, startTime, endTime, taskId) {
       // 将开始和结束时间转换为分钟
       const [startHour, startMinute] = startTime.split(':').map(Number);
       const [endHour, endMinute] = endTime.split(':').map(Number);
@@ -1212,7 +1314,7 @@ export default {
     },
     
     // 设置高度观察器
-    setupHeightObserver() {
+    setupHeightObserver() {//可以删除
       // 获取左侧面板
       const leftPanel = document.querySelector('.left-panel');
       
@@ -1242,105 +1344,18 @@ export default {
       document.addEventListener('taskUpdated', this.syncPanelHeight);
     },
     
-    // 同步面板高度
-    syncPanelHeight() {
-      if (!this.$refs.timelineContainer) return;
-      
-      const container = this.$refs.timelineContainer;
-      
-      // 获取左侧面板高度
-      let leftPanelHeight = 0;
-      const leftPanel = document.querySelector('.left-panel');
-      if (leftPanel) {
-        leftPanelHeight = leftPanel.clientHeight;
-      }
-      
-      // 确保时间轴容器高度与左侧面板高度一致
-      const timelineHeight = 24 * 60 * this.timeScale;
-      
-      // 设置容器的最小高度为左侧面板高度（减去padding和其他UI元素的高度）
-      const uiElementsHeight = 140; // 估计值，包括标题和按钮等高度 (80px * 1.75)
-      const availableHeight = Math.max(leftPanelHeight - uiElementsHeight, 700); // 确保最小高度为700px (400px * 1.75)
-      
-      container.style.minHeight = `${availableHeight}px`;
-      container.style.maxHeight = `${availableHeight}px`;
-      
-      // 确保内容高度足够显示完整时间轴
-      const innerContent = container.querySelector('.timeline-grid');
-      if (innerContent) {
-        innerContent.style.minHeight = `${timelineHeight}px`;
-      }
-    },
-    
-    // 确保浮窗在视窗内可见
-    adjustFloatingWindowPosition(position, windowWidth, windowHeight) {
-      const safeMargin = 25; // 安全边距，防止窗口太靠近边缘
-      
-      // 获取视窗尺寸和滚动位置
-      const viewport = {
-        width: window.innerWidth,
-        height: window.innerHeight,
-        scrollX: window.pageXOffset || document.documentElement.scrollLeft,
-        scrollY: window.pageYOffset || document.documentElement.scrollTop
-      };
-      
-      // 创建新的位置对象，避免修改原始对象
-      const adjustedPosition = {
-        x: position.x,
-        y: position.y
-      };
-      
-      // 处理X轴位置 - 考虑滚动位置
-      // 如果窗口超出右边界
-      if (adjustedPosition.x + windowWidth > viewport.width + viewport.scrollX - safeMargin) {
-        // 如果窗口宽度超过视窗宽度，则居中显示
-        if (windowWidth > viewport.width - 2 * safeMargin) {
-          adjustedPosition.x = viewport.scrollX + safeMargin;
-        } else {
-          adjustedPosition.x = viewport.width + viewport.scrollX - windowWidth - safeMargin;
-        }
-      }
-      
-      // 确保X轴不小于安全边距（考虑滚动）
-      if (adjustedPosition.x < viewport.scrollX + safeMargin) {
-        adjustedPosition.x = viewport.scrollX + safeMargin;
-      }
-      
-      // 处理Y轴位置 - 考虑滚动位置
-      // 如果窗口超出底部边界
-      if (adjustedPosition.y + windowHeight > viewport.height + viewport.scrollY - safeMargin) {
-        // 如果窗口高度超过视窗高度，则从顶部显示
-        if (windowHeight > viewport.height - 2 * safeMargin) {
-          adjustedPosition.y = viewport.scrollY + safeMargin;
-        } else {
-          adjustedPosition.y = viewport.height + viewport.scrollY - windowHeight - safeMargin;
-        }
-      }
-      
-      // 确保Y轴不小于安全边距（考虑滚动）
-      if (adjustedPosition.y < viewport.scrollY + safeMargin) {
-        adjustedPosition.y = viewport.scrollY + safeMargin;
-      }
-      
-      // 最终检查确保位置在视窗范围内
-      adjustedPosition.x = Math.max(viewport.scrollX + safeMargin, 
-                           Math.min(adjustedPosition.x, 
-                                   viewport.width + viewport.scrollX - windowWidth - safeMargin));
-      adjustedPosition.y = Math.max(viewport.scrollY + safeMargin, 
-                           Math.min(adjustedPosition.y, 
-                                   viewport.height + viewport.scrollY - windowHeight - safeMargin));
-      
-      return adjustedPosition;
-    },
+
     
     // 全局点击处理，关闭所有浮窗
     closeAllFloatingWindows(event) {
-      const wasAnyWindowOpen = this.showTaskForm || this.showTaskMenu;
-      
+      console.info("close pop windows")
+      //const wasAnyWindowOpen = this.showTaskForm || this.showTaskMenu;
+      if (this.justClosedFloatingWindow) return;
       // 如果点击在浮窗内部，不处理
-      if (event.target.closest('.task-form') || 
-          event.target.closest('.task-menu') ||
-          event.target.closest('.task-block')) {
+      if (event.target.closest('.task-form') 
+        || event.target.closest('.task-menu') 
+          // || event.target.closest('.task-block')
+          ) {
         return;
       }
       
@@ -1351,18 +1366,18 @@ export default {
       this.showTaskMenu = false;
       
       // 如果关闭了任何浮窗，设置标志位
-      if (wasAnyWindowOpen) {
-        this.justClosedFloatingWindow = true;
+      //if (wasAnyWindowOpen) {
+      //  this.justClosedFloatingWindow = true;
         
-        // 使用setTimeout在下一个事件循环中重置标志位
-        setTimeout(() => {
-          this.justClosedFloatingWindow = false;
-        }, 50);
+      //使用setTimeout在下一个事件循环中重置标志位
+      setTimeout(() => {
+        this.justClosedFloatingWindow = false;
+      }, 50);
         
         // 阻止事件传播，以防止在同一点击中触发其他事件
-        event.preventDefault();
-        event.stopPropagation();
-      }
+        //event.preventDefault();
+        //event.stopPropagation();
+      //}
       
       // 发送事件通知其他组件关闭浮窗
       this.$emit('close-all-floating-windows');
@@ -1501,63 +1516,8 @@ export default {
       indicator.style.left = `${rect.left}px`;
       indicator.textContent = timeString;
     },
-    
-    // 隐藏拉伸时的时间指示器
-    hideResizeTimeIndicator() {
-      const indicator = document.getElementById('resize-time-indicator');
-      if (indicator) {
-        document.body.removeChild(indicator);
-      }
-    },
-    
-    // 处理鼠标在时间轴上移动
-    handleTimelineMouseMove(event) {
-      // 如果有弹窗显示或正在拉伸，不显示悬停时间线
-      if (this.showTaskForm || this.showTaskMenu || this.resizing.active) {
-        this.hideHoverTimeLine();
-        return;
-      }
-      
-      // 检查鼠标是否在任务块上
-      if (event.target.closest('.task-block')) {
-        this.hideHoverTimeLine();
-        return;
-      }
-      
-      // 获取时间刻度区域位置
-      const timelineRect = this.getTimelineRect();
-      
-      // 计算鼠标位置对应的时间
-      const yPosition = event.clientY - timelineRect.top + this.$refs.timelineContainer.scrollTop;
-      
-      // 计算分钟数
-      const minutes = Math.floor(yPosition / this.timeScale);
-      
-      // 确保时间在有效范围内 (0:00 - 23:59)
-      if (minutes < 0 || minutes >= 24 * 60) {
-        this.hideHoverTimeLine();
-        return;
-      }
-      
-      // 计算小时和分钟
-      const hour = Math.floor(minutes / 60);
-      const minute = minutes % 60;
-      
-      // 格式化时间文本
-      this.hoverTimeText = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
-      
-      // 设置时间线位置
-      this.hoverTimePosition = yPosition;
-      
-      // 显示时间线
-      this.showHoverTimeLine = true;
-    },
-    
-    // 隐藏鼠标悬停时间线
-    hideHoverTimeLine() {
-      this.showHoverTimeLine = false;
-    },
-  }
+  
+  },
 }
 </script>
 
