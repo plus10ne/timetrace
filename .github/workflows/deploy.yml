@@ -1,37 +1,30 @@
-name: Deploy
+name: Deploy to gh-pages
 
 on:
   push:
-    branches: [ main ]  # 监听main分支的推送
+    branches: [main]  # main 分支更新时触发
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
     permissions:
       contents: write  # 关键权限配置
-
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Setup Node
-      uses: actions/setup-node@v3
-      with:
-        node-version: 18.x
+      - name: Install dependencies
+        run: npm install
+        working-directory: ./client
 
-    - name: Install dependencies
-      run: npm install
+      - name: Build
+        run: npm run build
+        working-directory: ./client
 
-    - name: Build project
-      run: |
-        npm run build
-        ls -R ./dist  # 验证构建产物
-
-    - name: Deploy to GH Pages
-      uses: peaceiris/actions-gh-pages@v3.9.3  # 使用固定版本
-      with:
-        github_token: ${{ secrets.GITHUB_TOKEN }}
-        publish_dir: ./dist
-        publish_branch: gh-pages  # 明确指定分支
-        force_orphan: true  # 强制清空历史
-        keep_files: false
+      - name: Deploy
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages  # 目标分支
+          publish_dir: ./dist       # 构建输出目录
+          force_orphan: true        # 强制清空分支历史
+          commit_message: "Deploy: ${{ github.sha }}"
