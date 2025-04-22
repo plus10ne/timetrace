@@ -313,7 +313,7 @@ export default {
       // updated.completedAt = updated.completed ? dayjs().format() : null
       // await dbUpdateTodo(updated)
       // this.todos[idx] = updated
-      
+      task.completedAt = new Date()
       task.completed = !task.completed
       this.$emit('toggle-task', task)
     },
