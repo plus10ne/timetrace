@@ -306,15 +306,13 @@ export default {
      * 直接修改数组元素以触发响应式
      */
     toggleTask(task) {
-      // const idx = this.todos.findIndex(t => t.id === task.id)
-      // if (idx === -1) return
-      // const updated = { ...this.todos[idx] }
-      // updated.completed = !updated.completed
-      // updated.completedAt = updated.completed ? dayjs().format() : null
-      // await dbUpdateTodo(updated)
-      // this.todos[idx] = updated
-      task.completedAt = new Date()
+      //切换完成状态
       task.completed = !task.completed
+
+      // 如果标记为完成，就写入 completedAt 时间；如果取消完成，则清空
+      task.completedAt = task.completed
+        ? dayjs().toISOString()
+        : null
       this.$emit('toggle-task', task)
     },
 
@@ -402,9 +400,9 @@ export default {
 
     /** 时间格式化 */
     formatTime(ts) {
-      if (!ts) return ''
-      const d = new Date(ts)
-      return `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`
+      return ts 
+      ? dayjs(ts).format('HH:mm') 
+      : ''
     }
   }
 }
